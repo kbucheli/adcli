@@ -103,8 +103,10 @@ struct _adcli_enroll {
 
 	char *host_fqdn;
 	int host_fqdn_explicit;
-	char *computer_name;
-	int computer_name_explicit;
+	char *netbios_computer_name;
+	int netbios_computer_name_explicit;
+	char *full_computer_name;
+	int full_computer_name_explicit;
 	char *computer_sam;
 	char *computer_password;
 	int computer_password_explicit;
@@ -209,21 +211,27 @@ ensure_computer_name (adcli_result res,
 	if (res != ADCLI_SUCCESS)
 		return res;
 
-	if (enroll->computer_name) {
+	if (enroll->netbios_computer_name ) {
 		_adcli_info ("Enrolling %s name: %s",
 		             s_or_c (enroll),
-		             enroll->computer_name);
+		             enroll->netbios_computer_name);
 		return ADCLI_SUCCESS;
 	}
 
-	if (!enroll->host_fqdn) {
+	if (enroll->full_computer_name ) {
+		_adcli_calc_netbios_name (enroll->full_computer_name, &enroll->netbios_computer_name, &enroll->full_computer_name);
+		return ADCLI_SUCCESS;
+	}
+	else if (enroll->host_fqdn) {
+		_adcli_calc_netbios_name (enroll->host_fqdn, &enroll->netbios_computer_name, &enroll->full_computer_name);
+	}
+	else {
 		_adcli_err ("No host name from which to determine the %s name",
-		            s_or_c (enroll));
+			    s_or_c (enroll));
 		return ADCLI_ERR_CONFIG;
 	}
 
-	enroll->computer_name = _adcli_calc_netbios_name (enroll->host_fqdn);
-	if (enroll->computer_name == NULL)
+	if (enroll->netbios_computer_name == NULL || enroll->full_computer_name == NULL)
 		return ADCLI_ERR_CONFIG;
 
 	return ADCLI_SUCCESS;
@@ -242,7 +250,7 @@ ensure_computer_sam (adcli_result res,
 	free (enroll->computer_sam);
 	enroll->computer_sam = NULL;
 
-	if (asprintf (&enroll->computer_sam, "%s$", enroll->computer_name) < 0)
+	if (asprintf (&enroll->computer_sam, "%s$", enroll->netbios_computer_name) < 0)
 		return_unexpected_if_fail (enroll->computer_sam != NULL);
 
 	k5 = adcli_conn_get_krb5_context (enroll->conn);
@@ -352,8 +360,8 @@ ensure_computer_password (adcli_result res,
 		return ADCLI_SUCCESS;
 
 	if (enroll->reset_password) {
-		assert (enroll->computer_name != NULL);
-		enroll->computer_password = _adcli_calc_reset_password (enroll->computer_name);
+		assert (enroll->netbios_computer_name != NULL);
+		enroll->computer_password = _adcli_calc_reset_password (enroll->netbios_computer_name);
 		return_unexpected_if_fail (enroll->computer_password != NULL);
 		_adcli_info ("Using default reset computer password");
 
@@ -419,7 +427,7 @@ add_service_names_to_service_principals (adcli_enroll *enroll)
 	}
 
 	for (i = 0; enroll->service_names[i] != NULL; i++) {
-		if (asprintf (&name, "%s/%s", enroll->service_names[i], enroll->computer_name) < 0)
+		if (asprintf (&name, "%s/%s", enroll->service_names[i], enroll->netbios_computer_name) < 0)
 			return_unexpected_if_reached ();
 		enroll->service_principals = _adcli_strv_add_unique (enroll->service_principals,
 		                                                     name, &length, false);
@@ -582,7 +590,7 @@ ensure_user_principal (adcli_result res,
 		return res;
 
 	if (enroll->user_princpal_generate) {
-		name = strdup (enroll->computer_name);
+		name = strdup (enroll->netbios_computer_name);
 		return_unexpected_if_fail (name != NULL);
 
 		_adcli_str_down (name);
@@ -707,7 +715,7 @@ calculate_computer_account (adcli_enroll *enroll,
 	free (enroll->computer_dn);
 	enroll->computer_dn = NULL;
 
-	if (asprintf (&enroll->computer_dn, "CN=%s,%s", enroll->computer_name, enroll->computer_container) < 0)
+	if (asprintf (&enroll->computer_dn, "CN=%s,%s", enroll->full_computer_name, enroll->computer_container) < 0)
 		return_unexpected_if_reached ();
 
 	_adcli_info ("Calculated %s account: %s",
@@ -1143,7 +1151,7 @@ validate_computer_account (adcli_enroll *enroll,
 
 	if (already_exists && !allow_overwrite) {
 		_adcli_err ("The %s account %s already exists",
-		            s_or_c (enroll), enroll->computer_name);
+		            s_or_c (enroll), enroll->netbios_computer_name);
 		return ADCLI_ERR_CONFIG;
 	}
 
@@ -1152,7 +1160,7 @@ validate_computer_account (adcli_enroll *enroll,
 		if (!_adcli_ldap_dn_has_ancestor (enroll->computer_dn, enroll->domain_ou)) {
 			_adcli_err ("The %s account %s already exists, "
 			            "but is not in the desired organizational unit.",
-			            s_or_c (enroll), enroll->computer_name);
+			            s_or_c (enroll), enroll->netbios_computer_name);
 			return ADCLI_ERR_CONFIG;
 		}
 	}
@@ -1324,7 +1332,7 @@ refresh_service_account_name_sam_and_princ (adcli_enroll *enroll,
 {
 	adcli_result res;
 
-	adcli_enroll_set_computer_name (enroll, name);
+	adcli_enroll_set_netbios_computer_name (enroll, name);
 	res = ensure_computer_sam (ADCLI_SUCCESS, enroll);
 	res = ensure_keytab_principals (res, enroll);
 
@@ -1342,7 +1350,7 @@ calculate_random_service_account_name (adcli_enroll *enroll)
 	suffix = generate_host_password (enroll, 3, filter_sam_chars);
 	return_unexpected_if_fail (suffix != NULL);
 
-	ret = asprintf (&new_name, "%s!%s", enroll->computer_name, suffix);
+	ret = asprintf (&new_name, "%s!%s", enroll->netbios_computer_name, suffix);
 	free (suffix);
 	return_unexpected_if_fail (ret > 0);
 
@@ -1413,7 +1421,7 @@ locate_or_create_computer_account (adcli_enroll *enroll,
 
 	/* Next try and come up with where we think it should be */
 	if (enroll->computer_dn == NULL) {
-		if (enroll->is_service && !enroll->computer_name_explicit) {
+		if (enroll->is_service && !enroll->netbios_computer_name_explicit) {
 			res = calculate_random_service_account_name (enroll);
 			if (res != ADCLI_SUCCESS) {
 				return res;
@@ -2071,17 +2079,17 @@ load_keytab_entry (krb5_context k5,
 		}
 	}
 
-	if (!enroll->host_fqdn_explicit && !enroll->computer_name_explicit) {
+	if (!enroll->host_fqdn_explicit && !enroll->netbios_computer_name_explicit) {
 
 		/* Automatically use the netbios name */
-		if (!enroll->computer_name && len > 1 &&
+		if (!enroll->netbios_computer_name && len > 1 &&
 		    _adcli_str_has_suffix (name, "$") && !strchr (name, '/')) {
-			enroll->computer_name = name;
+			enroll->netbios_computer_name = name;
 			name[len - 1] = '\0';
 			_adcli_info ("Found %s name in keytab: %s",
 			             s_or_c (enroll), name);
-			adcli_conn_set_computer_name (enroll->conn,
-			                              enroll->computer_name);
+			adcli_conn_set_netbios_computer_name (enroll->conn,
+			                                      enroll->netbios_computer_name);
 			name = NULL;
 
 		} else if (!enroll->host_fqdn && _adcli_str_has_prefix (name, "host/") && strchr (name, '.')) {
@@ -2175,7 +2183,7 @@ build_principal_salts (adcli_enroll *enroll,
 	return_val_if_fail (code == 0, NULL);
 
 	/* Then a Windows 2003 computer account salt */
-	code = _adcli_krb5_w2k3_salt (k5, principal, enroll->computer_name, &salts[i++]);
+	code = _adcli_krb5_w2k3_salt (k5, principal, enroll->netbios_computer_name, &salts[i++]);
 	return_val_if_fail (code == 0, NULL);
 
 	/* And lastly a null salt */
@@ -2739,8 +2747,8 @@ adcli_enroll_load (adcli_enroll *enroll)
 	if (res != ADCLI_SUCCESS)
 		return res;
 
-	if (enroll->computer_name)
-		enroll->computer_name_explicit = 1;
+	if (enroll->netbios_computer_name)
+		enroll->netbios_computer_name_explicit = 1;
 	if (enroll->host_fqdn)
 		enroll->host_fqdn_explicit = 1;
 	if (enroll->service_principals)
@@ -3040,19 +3048,36 @@ adcli_enroll_set_host_fqdn (adcli_enroll *enroll,
 }
 
 const char *
-adcli_enroll_get_computer_name (adcli_enroll *enroll)
+adcli_enroll_get_netbios_computer_name (adcli_enroll *enroll)
 {
 	return_val_if_fail (enroll != NULL, NULL);
-	return enroll->computer_name;
+	return enroll->netbios_computer_name;
 }
 
 void
-adcli_enroll_set_computer_name (adcli_enroll *enroll,
+adcli_enroll_set_netbios_computer_name (adcli_enroll *enroll,
                                 const char *value)
 {
 	return_if_fail (enroll != NULL);
-	_adcli_str_set (&enroll->computer_name, value);
-	enroll->computer_name_explicit = (value != NULL);
+	_adcli_str_set (&enroll->netbios_computer_name, value);
+	enroll->netbios_computer_name_explicit = (value != NULL);
+}
+
+
+const char *
+adcli_enroll_get_full_computer_name (adcli_enroll *enroll)
+{
+	return_val_if_fail (enroll != NULL, NULL);
+	return enroll->full_computer_name;
+}
+
+void
+adcli_enroll_set_full_computer_name (adcli_enroll *enroll,
+				const char *value)
+{
+	return_if_fail (enroll != NULL);
+	_adcli_str_set (&enroll->full_computer_name, value);
+	enroll->full_computer_name_explicit = (value != NULL);
 }
 
 const char *

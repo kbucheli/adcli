@@ -50,7 +50,8 @@ struct _adcli_conn_ctx {
 	/* Input/output params */
 	char *user_name;
 	char *user_password;
-	char *computer_name;
+	char *netbios_computer_name;
+	char *full_computer_name;
 	char *computer_password;
 	char *login_ccache_name;
 	int login_ccache_name_is_krb5;
@@ -220,11 +221,14 @@ ensure_domain_and_host (adcli_result res,
 	return ADCLI_SUCCESS;
 }
 
-char *
-_adcli_calc_netbios_name (const char *host_fqdn)
+void
+_adcli_calc_netbios_name (const char *host_fqdn,
+			  char **netbios_computer_name,
+			  char **full_computer_name)
 {
 	const char *dom;
-	char *computer_name;
+	char *computer_name = NULL;
+	char *truncated_name = NULL;
 
 	/* Use the FQDN minus the last part */
 	dom = strchr (host_fqdn, '.');
@@ -233,26 +237,31 @@ _adcli_calc_netbios_name (const char *host_fqdn)
 	if (dom == host_fqdn) {
 		_adcli_err ("Couldn't determine the computer account name from host name: %s",
 		            host_fqdn);
-		return NULL;
+		return;
 
 	} else if (dom == NULL) {
 		computer_name = strdup (host_fqdn);
-		return_val_if_fail (computer_name != NULL, NULL);
+		return_if_fail (computer_name != NULL);
 
 	} else {
 		computer_name = strndup (host_fqdn, dom - host_fqdn);
-		return_val_if_fail (computer_name != NULL, NULL);
+		return_if_fail (computer_name != NULL);
 	}
+	*full_computer_name = computer_name;
 
-	_adcli_str_up (computer_name);
-	if (strlen (computer_name) > 15) {
-		computer_name[15] = 0;
-		_adcli_info ("Truncated computer account name from fqdn: %s", computer_name);
+	truncated_name = strdup (computer_name);
+	return_if_fail (truncated_name != NULL);
+
+	_adcli_str_up (truncated_name);
+	if (strlen (truncated_name) > 15) {
+		truncated_name[15] = 0;
+		_adcli_info ("Truncated computer account name from fqdn: %s", truncated_name);
 	} else {
-		_adcli_info ("Calculated computer account name from fqdn: %s", computer_name);
+		_adcli_info ("Calculated computer account name from fqdn: %s", truncated_name);
 	}
+	*netbios_computer_name = truncated_name;
 
-	return computer_name;
+	return;
 }
 
 static adcli_result
@@ -263,15 +272,15 @@ ensure_computer_name (adcli_result res,
 	if (res != ADCLI_SUCCESS)
 		return res;
 
-	if (conn->computer_name) {
-		_adcli_info ("Using computer account name: %s", conn->computer_name);
+	if (conn->netbios_computer_name && conn->full_computer_name) {
+		_adcli_info ("Using computer account name: %s", conn->netbios_computer_name);
 		return ADCLI_SUCCESS;
 	}
 
 	assert (conn->host_fqdn != NULL);
 
-	conn->computer_name = _adcli_calc_netbios_name (conn->host_fqdn);
-	if (conn->computer_name == NULL)
+	_adcli_calc_netbios_name (conn->host_fqdn, &conn->netbios_computer_name, &conn->full_computer_name);
+	if (conn->netbios_computer_name == NULL || conn->full_computer_name == NULL)
 		return ADCLI_ERR_CONFIG;
 
 	return ADCLI_SUCCESS;
@@ -507,7 +516,7 @@ _adcli_kinit_computer_creds (adcli_conn *conn,
 
 	k5 = adcli_conn_get_krb5_context (conn);
 
-	if (asprintf (&sam, "%s$", conn->computer_name) < 0)
+	if (asprintf (&sam, "%s$", conn->netbios_computer_name) < 0)
 		return_unexpected_if_reached();
 
 	code = _adcli_krb5_build_principal (k5, sam, conn->domain_realm, &principal);
@@ -546,7 +555,7 @@ _adcli_kinit_computer_creds (adcli_conn *conn,
 		}
 
 		if (password == NULL) {
-			new_password = _adcli_calc_reset_password (conn->computer_name);
+			new_password = _adcli_calc_reset_password (conn->netbios_computer_name);
 			password = new_password;
 		}
 
@@ -623,14 +632,14 @@ kinit_with_computer_credentials (adcli_conn *conn,
 
 	if (code == 0) {
 		_adcli_info ("Authenticated as %scomputer account: %s",
-		             use_default ? "default/reset " : "", conn->computer_name);
+		             use_default ? "default/reset " : "", conn->netbios_computer_name);
 
 		conn->login_type = ADCLI_LOGIN_COMPUTER_ACCOUNT;
 		res = ADCLI_SUCCESS;
 
 	} else {
 		res = handle_kinit_krb5_code (conn, ADCLI_LOGIN_COMPUTER_ACCOUNT,
-		                              conn->computer_name, code);
+		                              conn->netbios_computer_name, code);
 	}
 
 	return res;
@@ -1318,7 +1327,8 @@ conn_free (adcli_conn *conn)
 	_adcli_strv_free (conn->supported_capabilities);
 	_adcli_strv_free (conn->supported_sasl_mechs);
 
-	free (conn->computer_name);
+	free (conn->netbios_computer_name);
+	free (conn->full_computer_name);
 	free (conn->host_fqdn);
 	free (conn->krb5_conf_dir);
 
@@ -1374,18 +1384,33 @@ adcli_conn_set_host_fqdn (adcli_conn *conn,
 }
 
 const char *
-adcli_conn_get_computer_name (adcli_conn *conn)
+adcli_conn_get_netbios_computer_name (adcli_conn *conn)
 {
 	return_val_if_fail (conn != NULL, NULL);
-	return conn->computer_name;
+	return conn->netbios_computer_name;
 }
 
 void
-adcli_conn_set_computer_name (adcli_conn *conn,
+adcli_conn_set_netbios_computer_name (adcli_conn *conn,
                               const char *value)
 {
 	return_if_fail (conn != NULL);
-	_adcli_str_set (&conn->computer_name, value);
+	_adcli_str_set (&conn->netbios_computer_name, value);
+}
+
+const char *
+adcli_conn_get_full_computer_name (adcli_conn *conn)
+{
+	return_val_if_fail (conn != NULL, NULL);
+	return conn->full_computer_name;
+}
+
+void
+adcli_conn_set_full_computer_name (adcli_conn *conn,
+			      const char *value)
+{
+	return_if_fail (conn != NULL);
+	_adcli_str_set (&conn->full_computer_name, value);
 }
 
 const char *

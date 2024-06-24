@@ -50,7 +50,8 @@ dump_details (adcli_conn *conn,
 
 	printf ("[computer]\n");
 	printf ("host-fqdn = %s\n", adcli_conn_get_host_fqdn (conn));
-	printf ("computer-name = %s\n", adcli_conn_get_computer_name (conn));
+	printf ("netbios_computer-name = %s\n", adcli_conn_get_netbios_computer_name (conn));
+	printf ("full_computer-name = %s\n", adcli_conn_get_full_computer_name (conn));
 	printf ("computer-dn = %s\n", adcli_enroll_get_computer_dn (enroll));
 	if (show_password)
 		printf ("computer-password = %s\n", adcli_enroll_get_computer_password (enroll));
@@ -223,8 +224,8 @@ parse_option (Option opt,
 		adcli_enroll_set_keytab_name (enroll, optarg);
 		return ADCLI_SUCCESS;
 	case opt_computer_name:
-		adcli_conn_set_computer_name (conn, optarg);
-		adcli_enroll_set_computer_name (enroll, optarg);
+		adcli_conn_set_full_computer_name (conn, optarg);
+		adcli_enroll_set_full_computer_name (enroll, optarg);
 		return ADCLI_SUCCESS;
 	case opt_domain:
 		adcli_conn_set_domain_name (conn, optarg);
@@ -377,9 +378,9 @@ parse_fqdn_or_name (adcli_enroll *enroll,
 {
 	if (strchr (arg, '.') != NULL) {
 		adcli_enroll_set_host_fqdn (enroll, arg);
-		adcli_enroll_set_computer_name (enroll, NULL);
+		adcli_enroll_set_full_computer_name (enroll, NULL);
 	} else {
-		adcli_enroll_set_computer_name (enroll, arg);
+		adcli_enroll_set_full_computer_name (enroll, arg);
 		adcli_enroll_set_host_fqdn (enroll, NULL);
 	}
 }
@@ -843,7 +844,7 @@ adcli_tool_computer_preset (adcli_conn *conn,
 			return -res;
 		}
 
-		printf ("computer-name: %s\n", adcli_enroll_get_computer_name (enroll));
+		printf ("netbios-computer-name: %s\n", adcli_enroll_get_netbios_computer_name (enroll));
 	}
 
 	adcli_enroll_unref (enroll);
@@ -1112,7 +1113,7 @@ adcli_tool_computer_show (adcli_conn *conn,
 		warnx ("couldn't read data for %s: %s",
 		       adcli_enroll_get_host_fqdn (enroll) != NULL
 		           ? adcli_enroll_get_host_fqdn (enroll)
-		           : adcli_enroll_get_computer_name (enroll),
+		           : adcli_enroll_get_netbios_computer_name (enroll),
 		       adcli_get_last_error ());
 		adcli_enroll_unref (enroll);
 		return -res;

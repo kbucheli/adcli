@@ -68,9 +68,14 @@ const char *       adcli_enroll_get_host_fqdn           (adcli_enroll *enroll);
 void               adcli_enroll_set_host_fqdn           (adcli_enroll *enroll,
                                                          const char *value);
 
-const char *       adcli_enroll_get_computer_name       (adcli_enroll *enroll);
+const char *       adcli_enroll_get_netbios_computer_name (adcli_enroll *enroll);
 
-void               adcli_enroll_set_computer_name       (adcli_enroll *enroll,
+void               adcli_enroll_set_netbios_computer_name (adcli_enroll *enroll,
+                                                           const char *value);
+
+const char *       adcli_enroll_get_full_computer_name  (adcli_enroll *enroll);
+
+void               adcli_enroll_set_full_computer_name  (adcli_enroll *enroll,
                                                          const char *value);
 
 const char *       adcli_enroll_get_computer_password   (adcli_enroll *enroll);
