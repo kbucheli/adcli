@@ -376,6 +376,7 @@ static void
 parse_fqdn_or_name (adcli_enroll *enroll,
                     const char *arg)
 {
+	adcli_enroll_set_netbios_computer_name (enroll, NULL);
 	if (strchr (arg, '.') != NULL) {
 		adcli_enroll_set_host_fqdn (enroll, arg);
 		adcli_enroll_set_full_computer_name (enroll, NULL);

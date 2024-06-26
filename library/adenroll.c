@@ -222,19 +222,15 @@ ensure_computer_name (adcli_result res,
 		_adcli_calc_netbios_name (enroll->full_computer_name, &enroll->netbios_computer_name, &enroll->full_computer_name);
 		return ADCLI_SUCCESS;
 	}
-	else if (enroll->host_fqdn) {
+
+	if (enroll->host_fqdn) {
 		_adcli_calc_netbios_name (enroll->host_fqdn, &enroll->netbios_computer_name, &enroll->full_computer_name);
-	}
-	else {
-		_adcli_err ("No host name from which to determine the %s name",
-			    s_or_c (enroll));
-		return ADCLI_ERR_CONFIG;
+		return ADCLI_SUCCESS;
 	}
 
-	if (enroll->netbios_computer_name == NULL || enroll->full_computer_name == NULL)
-		return ADCLI_ERR_CONFIG;
-
-	return ADCLI_SUCCESS;
+	_adcli_err ("No host name from which to determine the %s name",
+		    s_or_c (enroll));
+	return ADCLI_ERR_CONFIG;
 }
 
 static adcli_result
@@ -2044,6 +2040,7 @@ load_keytab_entry (krb5_context k5,
 	size_t len;
 	char *value;
 	char *name;
+	char *dom;
 
 	/* Skip over any entry without a principal or realm */
 	principal = entry->principal;
@@ -2079,7 +2076,7 @@ load_keytab_entry (krb5_context k5,
 		}
 	}
 
-	if (!enroll->host_fqdn_explicit && !enroll->netbios_computer_name_explicit) {
+	if (!enroll->host_fqdn_explicit && !enroll->full_computer_name_explicit && !enroll->netbios_computer_name_explicit) {
 
 		/* Automatically use the netbios name */
 		if (!enroll->netbios_computer_name && len > 1 &&
@@ -2092,11 +2089,16 @@ load_keytab_entry (krb5_context k5,
 			                                      enroll->netbios_computer_name);
 			name = NULL;
 
-		} else if (!enroll->host_fqdn && _adcli_str_has_prefix (name, "host/") && strchr (name, '.')) {
-			/* Skip host/ prefix */
-			enroll->host_fqdn = strdup (name + 5);
-			return_val_if_fail (enroll->host_fqdn != NULL, FALSE);
-			_adcli_info ("Found host qualified name in keytab: %s", enroll->host_fqdn);
+		} else {
+			dom = strchr (name, '.');
+			if (!enroll->host_fqdn && _adcli_str_has_prefix (name, "host/") && dom) {
+				/* Skip host/ prefix */
+				enroll->host_fqdn = strdup (name + 5);
+				return_val_if_fail (enroll->host_fqdn != NULL, FALSE);
+				enroll->full_computer_name = strndup (name + 5, dom - name - 5);
+				return_val_if_fail (enroll->full_computer_name != NULL, FALSE);
+				_adcli_info ("Found host qualified name in keytab: %s", enroll->host_fqdn);
+			}
 		}
 	}
 
@@ -2749,6 +2751,8 @@ adcli_enroll_load (adcli_enroll *enroll)
 
 	if (enroll->netbios_computer_name)
 		enroll->netbios_computer_name_explicit = 1;
+	if (enroll->full_computer_name)
+		enroll->full_computer_name_explicit = 1;
 	if (enroll->host_fqdn)
 		enroll->host_fqdn_explicit = 1;
 	if (enroll->service_principals)
